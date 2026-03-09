@@ -19,4 +19,4 @@ test: vla-x1.exe vla-x2.exe vla-x3.exe
 	./vla-x4.exe
 
 clean:
-	rm -f $(EXE)
+	rm -f *.exe
