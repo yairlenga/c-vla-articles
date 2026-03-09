@@ -24,6 +24,10 @@ static inline void concat(char *result, int sz, const char *s1, const char *s2)
 #define FLEX_STR_MAX 64
 #endif
 
+int flex_str_max = FLEX_STR_MAX ;
+#undef FLEX_STR_MAX
+#define FLEX_STR_MAX flex_str_max
+
 #define STR_VIEW_INIT(var_, sz_) \
 	int var_##_sz = sz_ ; \
 	char var_##_vla[var_##_sz >FLEX_STR_MAX ? 0 : var_##_sz] ; \
@@ -52,21 +56,31 @@ static double now(void)
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 {
-	test1(true, "aaaaa", "bbbbb") ;
-	test1(true, "aaaaaaaaaabbbbbbbbbbcccccccccc", "ddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhh");
+	int N = argc > 1 ? atoi(argv[1]) : 1000000 ;
+	int S = argc > 2 ? atoi(argv[2]) : FLEX_STR_MAX ;
 
-	const int N=10000000 ;
+	char a[S] ;
+	memset(a, 'A', S-1) ;
+	a[S-1] = 0 ;
+
+	char *b3 = "bbb" ;
+	char *b5 = "bbbbb" ;
+
+	// Warmup
+	test1(!N, a, b3) ;
+	test1(!N, a, b5) ;
+
 	double t0= now() ;
 	for (int i=0 ; i<N ; i++ ) {
-		test1(i==0, "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffff", "xxx") ;
+		test1(false, a, b3) ;
 	}
 	double t1 = now() ;
 	for (int i=0 ; i<N ; i++ ) {
-		test1(i==0, "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffff", "xxxx") ;
+		test1(false, a, b5) ;
 	}
 	double t2= now() ;
 
-	printf("Speed (1M): VLA=%.6f, MALLOC=%.6f\n", 1000000*(t1-t0)/N, 1000000*(t2-t1)/N) ;
+	fprintf(stderr, "Speed (1M): VLA=%.6f, MALLOC=%.6f\n", 1000000*(t1-t0)/N, 1000000*(t2-t1)/N) ;
 
 	exit(EXIT_SUCCESS) ;
 }
