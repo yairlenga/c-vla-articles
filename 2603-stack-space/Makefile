@@ -1,11 +1,14 @@
 default: all
 
-ALL = gcc-vla-str-1.exe clang-vla-str-1.exe musl-vla-str-1.exe
+ALL = brute-force.exe print-in-signal.exe probe-fork.exe probe-longjump.exe probe-pthread.exe query-stack.exe
 
 all: $(ALL)
 
-CFLAGS = -std=c11 -Wall -Wextra -Werror -g -D_DEFAULT_SOURCE -O2
+CFLAGS = -std=c2x -Wall -Wextra -Werror -g -D_DEFAULT_SOURCE -O2
 CFLAGS += -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-clash-protection -fcf-protection=none
+
+%.exe: %.c
+	$(LINK.c) $^ $(LOADLIBES) $(LDLIBS) -o $@
 
 gcc-%: CC=gcc
 gcc-%.exe: %.c
