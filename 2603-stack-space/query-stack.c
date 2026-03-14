@@ -37,7 +37,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
     volatile char top_probe[1] ;
     size_t rlimit_unused_stack = get_rlimit_stack_size(top_probe) ;
     size_t rlimit_used = rlimit_stack_size - rlimit_unused_stack ;
-    printf("%s: getrlimit: rlimit_unused_stack= %zu (used=%zd)\n", __FILE__, rlimit_unused_stack, rlimit_used) ;
+    printf("%s: getrlimit: rlimit_unused_stack= %zu used=%zd\n", __FILE__, rlimit_unused_stack, rlimit_used) ;
 
     size_t pthread_unused_stack = get_pthread_stack_size() ;
     size_t pthread_used = rlimit_stack_size - pthread_unused_stack ;
