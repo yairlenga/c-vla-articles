@@ -23,7 +23,8 @@ static void stack_setup_pthread(void)
     s_stack_info = (struct stack_info) {
         .base = (StackAddr) stack_base,
         .size = stack_size,
-        .margin = 2*page_size
+        .margin = 2*page_size,
+        .low_mark = stack_marker_addr(),
     } ;
 }
 
@@ -46,7 +47,9 @@ void test2()
 
 int main(void)
 {
+    setup() ;
     show_space(__func__) ;
     test1() ;
     test2() ;
+    show_space("final") ;
 }

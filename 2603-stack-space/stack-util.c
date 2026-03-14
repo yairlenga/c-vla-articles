@@ -15,7 +15,7 @@ struct stack_info {
 static _Thread_local struct stack_info s_stack_info ;
 
 [[gnu::noinline]]
-static StackAddr stack_marker_addr(void)
+StackAddr stack_marker_addr(void)
 {
     volatile char marker[1];
     StackAddr sp = (StackAddr) marker ;
@@ -24,19 +24,25 @@ static StackAddr stack_marker_addr(void)
 }
 
 
-static size_t stack_remaining(void)
+size_t stack_remaining(void)
 {
     StackAddr stack_marker = stack_marker_addr() ;
     return stack_marker - s_stack_info.base - s_stack_info.margin ;
 }
 
-static size_t stack_inuse(void)
+size_t stack_inuse(void)
 {
     StackAddr stack_marker = stack_marker_addr() ;
     return s_stack_info.base + s_stack_info.size - stack_marker ;
 }
 
+struct stack_info get_stack_info(void)
+{
+    s_stack_info.max_use = s_stack_info.base + s_stack_info.size - s_stack_info.low_mark ;
+    return s_stack_info ;
+}
+
 void show_space(const char *where) {
     size_t remaining = stack_remaining() ;
-    printf("%s: remaining %'zd (used=%zd)\n", where, remaining, stack_inuse()) ;
+    printf("%s: remaining %'zd (used=%zd, max=%zd)\n", where, remaining, stack_inuse(), get_stack_info().max_use) ;
 }

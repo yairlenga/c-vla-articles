@@ -1,12 +1,13 @@
 // Example for acticle: "How Much Stack Space Does my Program have Left"
-// Compile: gcc gist-2603-stack-getrlimit.c
+// Compile: gcc gist-2603-stack-constructor.c
 // Run: ./a.out
-#include <stdlib.h>
+
+#define _GNU_SOURCE
 #include <sys/resource.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdint.h>
-#include <string.h>
+#include <pthread.h>
 
 #include "stack-util.c"
 
@@ -19,27 +20,32 @@ static void stack_setup_getrlimit(void)
     s_stack_info = (struct stack_info) {
         .base = stack_top - stack_limit.rlim_cur,
         .size = stack_limit.rlim_cur,
-        .margin = 2*page_size
+        .margin = 2*page_size,
+        .low_mark = stack_marker_addr(),
     } ;
 }
 
-void test1() {
-    [[maybe_unused]] char x[30000] ;
-    show_space(__func__) ;
+[[gnu::constructor]]
+static void stack_setup_atstart(void)
+{
+    stack_setup_getrlimit() ;
+}
 
+void test1() {
+    [[maybe_unused]]  char x[30000] ;
+    show_space(__func__) ;
 }
 
 void test2()
 {
-    [[maybe_unused]] char x[60000] ;
+    [[maybe_unused]]  char x[60000] ;
     show_space(__func__) ;
 }
 
 int main(void)
 {
-    stack_setup_getrlimit() ;
     show_space(__func__) ;
     test1() ;
     test2() ;
-
+    show_space("final") ;
 }

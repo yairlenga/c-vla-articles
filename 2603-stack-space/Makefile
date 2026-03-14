@@ -28,11 +28,16 @@ test: $(GISTS_ALL)
 	./gist-2603-stack-pthread.exe
 	./gist-2603-stack-constructor.exe
 
-gists:
+gist-2603-stack-getrlimit.c: stack-getrlimit.c
+
+gist-2603-%: % expand.awk stack-util.c
+	awk -f expand.awk $< > $@.tmp && mv $@.tmp $@
+
+gists: gist-2603-stack-getrlimit.c gist-2603-stack-pthread.c gist-2603-stack-constructor.c
 	gcc gist-2603-stack-getrlimit.c && ./a.out
 	gcc gist-2603-stack-pthread.c && ./a.out
 	gcc gist-2603-stack-constructor.c && ./a.out
 
 
 clean:
-	rm -f *.exe
+	rm -f *.exe gist-2603-*.c a.out
