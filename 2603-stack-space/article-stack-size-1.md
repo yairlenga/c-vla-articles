@@ -156,6 +156,8 @@ Complete Implementation (build instruction in comments) as GitHub GIST
 
 Note that RLIMIT_STACK gives the maximum allowed stack, not necessarily the mapped stack. The actual stack memory is usually grown lazily by the kernel as needed.
 
+See working example [gist-2603-stack-getrlimit.c](https://gist.github.com/yairlenga/b24d0f6feebc403f38f7df90ee8aecc1)
+
 ------------------------------------------------------------------------
 
 # Method 2: Using `pthread_getattr_np`
@@ -187,6 +189,8 @@ For Linux programs that already use `pthread`, this is often the
 the program to link with the pthread library, but **does not** launch extra
 threads, or introduce thread-safety issues into code that does not otherwise
 launch additional threads.
+
+See working example [gist-2603-stack-pthread.c](https://gist.github.com/yairlenga/3d2e098d83099e889161c449f7988244)
 
 ------------------------------------------------------------------------
 
@@ -244,10 +248,14 @@ This approach avoids the need for `pthread`, and the measurement can be
 implemented entirely inside a helper module without requiring any
 changes to `main()`.
 
+See working example [gist-2603-stack-constructor.c](https://gist.github.com/yairlenga/0a60a1d071808035ff75f88570be6e62)
+
 Like the other techniques presented here, this method provides an
 **estimate** rather than an exact measurement, but it is often
 sufficient to guide decisions such as whether a temporary buffer should
 be placed on the stack or the heap.
+
+
 
 # Turning This into a Small Utility
 
@@ -335,9 +343,14 @@ A few factors can influence stack usage:
 Because of this, it is wise to leave a **safety margin** when making
 decisions based on remaining stack space.
 
-In practice, leaving a few kilobytes (8-32) of buffer is usually sufficient.
+In practice, leaving a few kilobytes (8-64) of buffer is usually sufficient.
 
 ------------------------------------------------------------------------
+
+# Decision Chart
+
+![Choosing a Stack Size Estimation Technique](decision-chart.png)
+
 
 # Conclusion
 
