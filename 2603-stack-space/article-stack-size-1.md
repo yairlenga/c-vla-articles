@@ -2,7 +2,9 @@
 
 ## Practical techniques for estimating remaining stack space at runtime on Linux systems.
 
-In a previous article I suggested using **stack allocation (VLAs)** for
+![Dynamic buffer decision](stack-or-heap-alloc.png)
+
+In a previous article - [Avoiding malloc for Small Strings in C With Variable Length Arrays (VLAs)](https://medium.com/@yair.lenga/avoiding-malloc-for-small-strings-in-c-with-variable-length-arrays-vlas-7b1fbcae7193) - I suggested using **stack allocation (VLAs)** for
 small temporary buffers in C as an alternative to `malloc()`.
 
 One of the most common concerns in the comments was:
@@ -13,7 +15,7 @@ One of the most common concerns in the comments was:
 This concern is understandable. If a program accidentally exceeds the
 stack limit, the result is usually a **segmentation fault**.
 
-However, while the C language and standard library do not expose stack information,  modern operating systems - including Linux -
+While the C language and standard library do not expose stack information,  modern operating systems - including Linux -
 expose enough information to **estimate available stack space**.
 
 This article explores a few practical techniques to answer the question:
