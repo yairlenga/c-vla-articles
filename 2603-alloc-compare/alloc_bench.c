@@ -90,8 +90,6 @@ static const char *strategy_name[] = {
     [STRAT_HEAP_BULK] = "heap/bulk",
 } ;
 
-static volatile double g_total = 0.0;
-
 static double now_seconds(void) {
     struct timespec ts;
 #if defined(CLOCK_MONOTONIC)
@@ -134,6 +132,10 @@ struct loan_info {
     int days ;
     double orig_bal ;
     double coupon ;
+} ;
+
+struct portfolio_result {
+    double pv ;
 } ;
 
 static struct loan_info get_loan_info(int loanid, int sim_days)
@@ -220,39 +222,35 @@ static inline void *xmalloc(size_t n) {
     return p;
 }
 
-static void run_heap_per_loan(int loans, int sim_days, int passes) {
+static struct portfolio_result port_pv_heap_per_loan(int loans, int sim_days)
+{
+    struct portfolio_result res = {} ; 
+    double *DF = (double *)xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
+    calc_DF(sim_days, DF, 5.0) ;
 
-    for (int pass = 0; pass < passes; ++pass) {
+    for (int loan = 0; loan < loans; ++loan) {
+        struct loan_info info = get_loan_info(loan, sim_days) ;
 
-        double total = 0.0;
-        double *DF = (double *)xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
-        calc_DF(sim_days, DF, 5.0) ;
+        int loan_days = info.days ;
+        double *P  = xmalloc( loan_days * sizeof(*P));
+        double *S  = xmalloc( loan_days * sizeof(*S));
+        double *I  = xmalloc( loan_days * sizeof(*I));
+        double *L  = xmalloc( loan_days * sizeof(*L));
 
-        for (int loan = 0; loan < loans; ++loan) {
-            struct loan_info info = get_loan_info(loan, sim_days) ;
+        model_loan(&info, S, P, I, L);
+        res.pv += loan_pv(loan_days, S, P, I, L, DF) ;
 
-            int loan_days = info.days ;
-            double *P  = (double *)xmalloc( loan_days * sizeof(*P));
-            double *S  = (double *)xmalloc( loan_days * sizeof(*P));
-            double *I  = (double *)xmalloc( loan_days * sizeof(*I));
-            double *L  = (double *)xmalloc( loan_days * sizeof(*L));
-
-            model_loan(&info, S, P, I, L);
-            total += loan_pv(loan_days, S, P, I, L, DF) ;
-
-            free(L);
-            free(I);
-            free(P);
-            free(S) ;
-        }
-        g_total += total;
-
-        free(DF) ;
+        free(L);
+        free(I);
+        free(P);
+        free(S) ;
     }
 
+    free(DF) ;
+    return res ;
 }
 
-static void run_heap_bulk(int loans, int sim_days, int passes)
+static struct portfolio_result port_pv_heap_bulk(int loans, int sim_days)
 {
     struct loan_data {
         double P[STATIC_MAX_DAYS] ;
@@ -260,35 +258,33 @@ static void run_heap_bulk(int loans, int sim_days, int passes)
         double L[STATIC_MAX_DAYS] ;
         double S[STATIC_MAX_DAYS] ;
     } ;
+    struct portfolio_result res = {} ; 
 
-    for (int pass = 0; pass < passes; ++pass) {
+    double *DF = (double *)xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
+    calc_DF(sim_days, DF, 5.0) ;
 
-        double total = 0.0;
-        double *DF = (double *)xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
-        calc_DF(sim_days, DF, 5.0) ;
+    for (int loan = 0; loan < loans; ++loan) {
+        struct loan_info info = get_loan_info(loan, sim_days) ;
 
-        for (int loan = 0; loan < loans; ++loan) {
-            struct loan_info info = get_loan_info(loan, sim_days) ;
+        struct loan_data *ld = malloc(sizeof(*ld)) ;
+        double *P  = ld->P ;
+        double *S  = ld->S ;
+        double *I  = ld->I ;
+        double *L  = ld->L ;
+        int loan_days = info.days ;
 
-            struct loan_data *ld = malloc(sizeof(*ld)) ;
-            double *P  = ld->P ;
-            double *S  = ld->S ;
-            double *I  = ld->I ;
-            double *L  = ld->L ;
-            int loan_days = info.days ;
+        model_loan(&info, S, P, I, L);
+        res.pv += loan_pv(loan_days, S, P, I, L, DF) ;
 
-            model_loan(&info, S, P, I, L);
-            total += loan_pv(loan_days, S, P, I, L, DF) ;
-
-            free(ld) ;
-        }
-        g_total += total;
-        free(DF) ;
+        free(ld) ;
     }
-
+    free(DF) ;
+    return res ;
 }
 
-static void run_heap_per_portfolio(int loans, int sim_days, int passes) {
+static struct portfolio_result port_pv_heap_reuse(int loans, int sim_days) 
+{
+    struct portfolio_result res = {} ; 
 
     double *P  = (double *)xmalloc(STATIC_MAX_DAYS*sim_days);
     double *S  = (double *)xmalloc(STATIC_MAX_DAYS*sim_days);
@@ -298,14 +294,10 @@ static void run_heap_per_portfolio(int loans, int sim_days, int passes) {
     double *DF = (double *)xmalloc(STATIC_MAX_DAYS * sizeof(*DF));
     calc_DF(STATIC_MAX_DAYS, DF, 5.0 ) ;
 
-    for (int pass = 0; pass < passes; ++pass) {
-        double total = 0.0;
-        for (int loan = 0; loan < loans; ++loan) {
-            struct loan_info info = get_loan_info(loan, sim_days) ;
-            model_loan(&info, S, P, I, L);
-            total += loan_pv(info.days, S, P, I, L, DF) ;
-        }
-        g_total += total;
+    for (int loan = 0; loan < loans; ++loan) {
+        struct loan_info info = get_loan_info(loan, sim_days) ;
+        model_loan(&info, S, P, I, L);
+        res.pv += loan_pv(info.days, S, P, I, L, DF) ;
     }
 
     free(L);
@@ -313,9 +305,10 @@ static void run_heap_per_portfolio(int loans, int sim_days, int passes) {
     free(P);
     free(S) ;
     free(DF);
+    return res ;
 }
 
-static void run_static_reuse(int loans, int sim_days, int passes) {
+static struct portfolio_result port_pv_static_mem(int loans, int sim_days) {
     static double P[STATIC_MAX_DAYS];
     static double I[STATIC_MAX_DAYS];
     static double L[STATIC_MAX_DAYS];
@@ -329,50 +322,43 @@ static void run_static_reuse(int loans, int sim_days, int passes) {
         exit(2);
     }
 
+    struct portfolio_result res = {} ; 
     calc_DF(STATIC_MAX_DAYS, DF, 5.0 ) ;
 
-    for (int pass = 0; pass < passes; ++pass) {
-        double total = 0.0;
-
-        for (int loan = 0; loan < loans; ++loan) {
-            struct loan_info info = get_loan_info(loan, sim_days) ;
-            model_loan(&info, S, P, I, L);
-            total += loan_pv(info.days, S, P, I, L, DF) ;
-        }
-        g_total += total;
+    for (int loan = 0; loan < loans; ++loan) {
+        struct loan_info info = get_loan_info(loan, sim_days) ;
+        model_loan(&info, S, P, I, L);
+        res.pv += loan_pv(info.days, S, P, I, L, DF) ;
     }
-
+    return res ;
 }
 
-static void run_vla(int loans, int sim_days, int passes) {
+static struct portfolio_result port_pv_using_vla(int loans, int sim_days) {
 #if defined(__STDC_NO_VLA__)
     (void)loans; (void)days; (void)passes; (void)seed;
     fprintf(stderr, "VLA not supported by this compiler mode\n");
 #else
-
+    struct portfolio_result res = {} ;
     double DF[sim_days] ;
     calc_DF(sim_days, DF, 5.0 ) ;
 
-    for (int pass = 0; pass < passes; ++pass) {
-        double total = 0.0;
-        for (int loan = 0; loan < loans; ++loan) {
-            /*
-             * Be careful: 4 * days * sizeof(double) on stack.
-             * For large days this may overflow the stack.
-             */
+    for (int loan = 0; loan < loans; ++loan) {
+        /*
+            * Be careful: 4 * days * sizeof(double) on stack.
+            * For large days this may overflow the stack.
+            */
 
-            struct loan_info info = get_loan_info(loan, sim_days) ;
-            int loan_days = info.days ;
-            double P[loan_days];
-            double I[loan_days];
-            double L[loan_days];
-            double S[loan_days];
-            model_loan(&info, S, P, I, L);
-            total += loan_pv(info.days, S, P, I, L, DF) ;
-        }
-        g_total += total;
+        struct loan_info info = get_loan_info(loan, sim_days) ;
+        int loan_days = info.days ;
+        double P[loan_days];
+        double I[loan_days];
+        double L[loan_days];
+        double S[loan_days];
+        model_loan(&info, S, P, I, L);
+        res.pv += loan_pv(info.days, S, P, I, L, DF) ;
     }
 #endif
+    return res ;
 }
 
 static long parse_long(const char *s, const char *name) {
@@ -386,44 +372,41 @@ static long parse_long(const char *s, const char *name) {
     return v;
 }
 
-static void run_sim(enum alloc_strategy strategy, int loans, int days, int passes)
+static struct portfolio_result run_sim(enum alloc_strategy strategy, int loans, int days)
 {
     switch (strategy) {
         case STRAT_STATIC_REUSE:
-            run_static_reuse(loans, days, passes);
-            break;
+            return port_pv_static_mem(loans, days);
         case STRAT_VLA:
-            run_vla(loans, days, passes);
-            break;
+            return port_pv_using_vla(loans, days);
         case STRAT_HEAP:
-            run_heap_per_loan(loans, days, passes);
-            break;
+            return port_pv_heap_per_loan(loans, days);
         case STRAT_HEAP_BULK:
-            run_heap_bulk(loans, days, passes);
-            break;
+            return port_pv_heap_bulk(loans, days);
         case STRAT_HEAP_REUSE:
-            run_heap_per_portfolio(loans, days, passes);
-            break;
+            return port_pv_heap_reuse(loans, days);
         default:
             fprintf(stderr, "unknown strategy %d\n", strategy);
             abort() ;
     }
-
 }
 
-static void simulate(enum alloc_strategy strategy, int loans, int days, int passes, uint64_t seed)
+static struct portfolio_result simulate(enum alloc_strategy strategy, int loans, int days, int passes, uint64_t seed)
 {
     rng_state = seed ;
-    g_total = 0 ;
+    struct portfolio_result res = {} ;
 
     double t0 = now_seconds();
-    run_sim(strategy, loans, days, passes) ;
+    for (int pass = 0 ; pass < passes ; pass++) {
+        res = run_sim(strategy, loans, days) ;
+    }
     double t1 = now_seconds();
     double elapsed = t1 - t0;
     double loans_per_sec = loans * passes / elapsed ;
 
     printf("strategy: %-15s elapsed: %7.3f seconds, throughput: %10.2f loans/sec, V=%.3f\n",
-        strategy_name[strategy], elapsed, loans_per_sec, g_total/loans/passes) ;
+        strategy_name[strategy], elapsed, loans_per_sec, res.pv/loans) ;
+    return res ;
 }
 
 int main(int argc, char **argv) {
@@ -462,8 +445,8 @@ int main(int argc, char **argv) {
         simulate(STRAT_HEAP, loans, days, passes, seed) ;
         simulate(STRAT_HEAP_BULK, loans, days, passes, seed) ;
     } else {
-        simulate(strategy, loans, days, passes, seed) ;
-        printf("PV       : %.12f\n", g_total);
+        struct portfolio_result res = simulate(strategy, loans, days, passes, seed) ;
+        printf("PV       : %.12f\n", res.pv);
     }
     printf("\n") ;
 

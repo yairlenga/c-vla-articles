@@ -57,3 +57,8 @@ test-l.txt: $(EXE)
 
 test-x.txt: $(EXE)
 	$(MAKE) test ARGS="0 1000 12000" | tee $@
+
+report.txt: test-s.txt test-l.txt test-x.txt
+	cat $^ > report.txt
+
+report: report.txt
