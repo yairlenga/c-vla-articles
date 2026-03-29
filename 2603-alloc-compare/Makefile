@@ -37,28 +37,30 @@ tcmalloc-bench: alloc_bench.c
 clean:
 	rm -f $(EXE)
 
+SP = $E $E
+
 test: $(EXE)
-	./alloc-bench $(ARGS)
-	./glibc-bench $(ARGS)
-	./clang-bench $(ARGS)
-	./musl-bench $(ARGS)
-	./mimalloc-bench $(ARGS)
-	./jemalloc-bench $(ARGS)
-	./tcmalloc-bench $(ARGS)
+	./alloc-bench $(ARGS) | sed -e "s/^strategy:/result alloc-bench $(LABEL) /"
+	./glibc-bench $(ARGS) | sed -e "s/^strategy:/result gcc-glibc $(LABEL) /"
+	./clang-bench $(ARGS) | sed -e "s/^strategy:/result clang-glibc $(LABEL) /"
+	./musl-bench $(ARGS) | sed -e "s/^strategy:/result gcc-musl $(LABEL) /"
+	./mimalloc-bench $(ARGS) | sed -e "s/^strategy:/result gcc-mimalloc $(LABEL) /"
+	./jemalloc-bench $(ARGS) | sed -e "s/^strategy:/result gcc-jemalloc $(LABEL) /"
+	./tcmalloc-bench $(ARGS) | sed -e "s/^strategy:/result gcc-tcmalloc $(LABEL) /"
 
 test.txt: $(EXE)
 	$(MAKE) test | tee $@
 
 test-s.txt: $(EXE)
-	$(MAKE) test ARGS="0 1000 2000" | tee $@
+	$(MAKE) test ARGS="0 1000 8000" LABEL="small" | tee $@
+
+test-m.txt: $(EXE)
+	$(MAKE) test ARGS="0 1000 12000" LABEL="medium" | tee $@
 
 test-l.txt: $(EXE)
-	$(MAKE) test ARGS="0 1000 8000" | tee $@
+	$(MAKE) test ARGS="0 1000 16000" LABEL="large" | tee $@
 
-test-x.txt: $(EXE)
-	$(MAKE) test ARGS="0 1000 12000" | tee $@
-
-report.txt: test-s.txt test-l.txt test-x.txt
-	cat $^ > report.txt
+report.txt: test-s.txt test-m.txt test-l.txt
+	grep -h ^result $^ > report.txt
 
 report: report.txt

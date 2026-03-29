@@ -30,7 +30,7 @@
  *  clang -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -lm -o clang-bench
  *
  * Usage: (replace glibc-bench with the appropriate executable for other libraries)
- *   ./glibc-bench [strategy] [loans] [days] [passes] [seed]
+ *   ./glibc-bench [-Llabel] [strategy] [loans] [days] [passes] [seed]
  *
  * Example:
  *   # All strategies, 20k loans, 3600 days, 5 passes, fixed seed
@@ -71,7 +71,7 @@
 #define DEFAULT_PASSES 10
 #endif
 
-#define INT_RATE (5.0/100.0)
+#define INT_RATE (6.0/100.0)
 
 enum alloc_strategy {
     STRAT_ALL = 0,
