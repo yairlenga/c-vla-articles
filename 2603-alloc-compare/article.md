@@ -1,10 +1,18 @@
 # Temporary Memory Isn’t Free: Allocation Strategies and Their Hidden Costs
 
+> This article completes a short series on temporary memory in C:
+>
+> - First, we introduced stack-based allocation (using VLA) as a practical alternative to `malloc` for short-lived data  
+> - Then, we showed how to safely estimate and manage available stack space  
+> - Here, we measure the payoff: how allocation strategy impacts performance in a realistic workload   
+
 ## Introduction
 
 In many discussions, memory allocation is treated as an O(1) operation — a constant-time primitive that can be safely ignored in performance-critical code. In practice, that constant can be surprisingly large. Allocating memory may involve managing free lists, splitting or merging blocks, or occasionally requesting additional pages from the operating system. These costs are usually hidden behind a fast path, but when allocation happens repeatedly inside tight loops, the “constant time” assumption starts to leak.
 
 This becomes particularly relevant in financial analytics, where temporary memory is not just a convenience but often a requirement. Models are typically structured as independent components, each producing intermediate results that must be preserved for auditability, explainability, or reuse in downstream calculations. A typical valuation may generate multiple time series — such as scheduled principal, prepayments, interest, and losses — which are then aggregated or fed into other models. This separation improves modularity and traceability, but it also means that even relatively simple calculations rely on temporary arrays that are allocated and discarded repeatedly.
+
+While this article uses VLA as a concrete mechanism, the underlying point is broader: stack-based allocation has fundamentally different performance characteristics than heap allocation.
 
 As a result, allocation patterns that might seem avoidable in theory become common in practice — especially when applied across large portfolios, where these temporary structures are created thousands or millions of times.
 
@@ -16,13 +24,13 @@ A typical loan valuation computes cashflows over a time grid (often daily or mon
 
 ### Per-loan processing
 
-Each loan is evaluated independently over a time grid (daily, simplifying into 12 months X 30 days each) from origination to maturity. At each step, the model updates the outstanding balance and computes the corresponding cashflows based on contractual terms and behavioral assumptions (e.g., prepayments, defaults).
+Each loan is evaluated independently over a time grid (daily, using a simplified 30/360 convention) from origination to maturity. At each step, the model updates the outstanding balance and computes the corresponding cashflows based on contractual terms and behavioral assumptions (e.g., prepayments, defaults).
 
-### Arrays over time: `S, P, I, L, DF`
+### Arrays over time: `S, I, U, L, DF`
 
 The calculation typically materializes several time series, coming from different models.
 
-- `S[t]` — Schedule payments  - Cash Flow model
+- `S[t]` — Scheduled principal payments  - Cash Flow model
 - `I[t]` — interest payments  - Cash Flow model
 - `U[t]` — Unscheduled payments (pre-pays) - Prepay model
 - `L[t]` — losses (defaults / write-offs) - Loss model.
@@ -44,10 +52,10 @@ In practice, this means allocating a working set proportional to the number of t
 This implementation is representative of real-world code:
 
 - Each loan is processed independently  
-- Temporary arrays (`S, P, I, L`) are allocated per loan  
+- Temporary arrays (`S, I, U, L, DF`) are allocated per loan  
 - Discount factors are computed once and reused  
 
-Nothing here looks unusual or inefficient.  
+Nothing here looks unusual or inefficient — and that’s exactly the point.
 The expectation is that allocation overhead is small compared to the numerical work.
 
 This assumption is what we test next.
@@ -66,13 +74,13 @@ port_pv_heap_per_loan(int loans, int sim_days)
         struct loan_info info = get_loan_info(loan, sim_days);
         int loan_days = info.days;
 
-        double *P = xmalloc(loan_days * sizeof(*P));
+        double *U = xmalloc(loan_days * sizeof(*U));
         double *S = xmalloc(loan_days * sizeof(*S));
         double *I = xmalloc(loan_days * sizeof(*I));
         double *L = xmalloc(loan_days * sizeof(*L));
 
-        model_loan(&info, S, P, I, L);
-        res.pv += loan_pv(loan_days, S, P, I, L, DF);
+        model_loan(&info, S, U, I, L);
+        res.pv += loan_pv(loan_days, S, U, I, L, DF);
 
         free(L);
         free(I);
@@ -85,7 +93,7 @@ port_pv_heap_per_loan(int loans, int sim_days)
 }
 ```
 
-# The loan modeling code
+## The loan modeling code
 
 The modeling logic itself is straightforward and operates over the provided workspace:
 
@@ -102,15 +110,17 @@ static void model_loan(
 
     // Cash flows
     for (int t = 0; t < loan->days; ++t) {
-        // Calculate scheduled_principal, prepay, intrest and losses
-        S[t] = scheduled_principal ;
-        P[t] = prepay;
-        I[t] = interest;
-        L[t] = loss;
+        // Calculate scheduled_principal, prepay, interest and losses
+        S[t] = scheduled_principal(...) ;
+        P[t] = prepay(..);
+        I[t] = interest(...);
+        L[t] = loss(...);
     }
 
 }
 ```
+
+Actual code (single file, build instruction on the top) available as Github gist.
 ---
 
 ## Allocation Strategies
@@ -123,9 +133,9 @@ A single set of static buffers is allocated once and reused across all loans.
 
 This approach has effectively **zero allocation overhead** during the benchmark and serves as the reference point. It represents the best-case scenario where memory management is fully amortized and removed from the hot path.
 
-### VLA (stack allocation)
+### Stack allocation (VLA and fixed-size)
 
-Temporary arrays are allocated on the stack per loan using Variable Length Arrays (VLA).
+Temporary arrays are allocated on the stack per loan, either using fixed-size arrays or Variable Length Arrays (VLA).
 
 This avoids heap allocation entirely and keeps allocation cost very low and predictable. However, it is constrained by stack size and may require safeguards for large problem sizes.
 
@@ -139,7 +149,7 @@ This is the most straightforward and modular approach, but it introduces allocat
 
 Buffers are allocated once per portfolio (or per thread) and reused across loans. Per-loan data is allocated to the maximum possible size.
 
-This removes most allocation overhead while preserving flexibility. It is a common compromise in performance-sensitive systems, but make the code less modular - callers to the financial engine have to anticipate workspace requirements.
+This removes most allocation overhead while preserving flexibility. It is a common compromise in performance-sensitive systems, but makes the code less modular - callers must anticipate workspace requirements.
 
 ### Bulk allocation
 
@@ -153,8 +163,6 @@ In all cases, the only difference is how memory is obtained and released.
 This allows us to isolate the cost of allocation itself.
 
 ---
-
-## Benchmark Design
 
 ## Benchmark Design
 
@@ -186,7 +194,7 @@ All measurements are performed in a single-threaded application to keep the anal
 
 ---
 
-# Results
+## Results
 
 The choice of allocation strategy has a measurable impact on performance — even for relatively simple computations.
 
@@ -194,7 +202,7 @@ In our benchmark, per-loan allocation using `malloc` is up to **2.5x slower** th
 
 ## Throughput
 
-The following table summarize relative throughput, when running the simulation on a portfolio of 1000 loans with durations between 3000 and 12000 days (approxiatley 9 and 33.5 years). Average result, as reported by the program over 10 runs each.
+The following table summarizes relative throughput, when running the simulation on a portfolio of 1000 loans with durations between 3000 and 12000 days (approximately 9 and 33.5 years). Average result, as reported by the program over 10 runs each.
 
 To replicate `./alloc-bench 0 1000 12000`
 
@@ -203,11 +211,14 @@ To replicate `./alloc-bench 0 1000 12000`
 | Strategy (relative) | glibc | clang | musl  | mimalloc | jemalloc | tcmalloc |
 |---------------------|-------|-------|-------|----------|----------|----------|
 | static              | 100%  | 101%  |  99%  | 100%     | 100%     | 100%     |
-| vla                 | 100%  | 103%  |  99%  |  99%     |  99%     |  99%     |
+| Stack - VLA         | 100%  | 103%  |  99%  |  99%     |  99%     |  99%     |
 | heap (reuse)        |  95%  |  98%  |  94%  |  88%     | 100%     |  87%     |
 | heap (per loan)     |  37%  | 100%  |  16%  |  87%     |  95%     |  86%     |
 | bulk                | 100%  | 102%  |  18%  |  99%     |  98%     | 100%     |
 
+The clang/glibc result for per-loan allocation stands out and may reflect differences in code generation or allocator interaction.
+
+Additional runs (including shorter durations) show similar patterns/trends and are available in this Gitlab gist.
 
 ---
 
@@ -215,20 +226,23 @@ To replicate `./alloc-bench 0 1000 12000`
 
 Several patterns stand out from the results:
 
-- **VLA remains consistently close to the theoretical limit**  
-  Across all configurations, stack allocation (Fixed size and VLA) performs very close to the static baseline — effectively the theoretical speed limit where allocation cost is eliminated. It also shows minimal variability, making it both fast and predictable.
+- **Stack allocation remains consistently close to the theoretical limit**  
+  Across all configurations, stack allocation (fixed-size arrays and VLA) performs very close to the static baseline — effectively the lower bound where allocation cost is eliminated.
 
 - **Allocators are tuned, not universal**  
-  Each allocator performs well under certain allocation patterns, but it is easy to fall outside its “comfort zone.” - even it "reasonable" implementations of code. Repeated allocation/free in tight loops can expose slow paths and lead to significant performance penalties.
+  Each allocator performs well under certain allocation patterns, but it is easy to fall outside its “comfort zone.” - even in otherwise reasonable implementations. Repeated allocation/free in tight loops can expose slow paths and lead to significant performance penalties.
 
 - **Simple allocators can struggle under pressure**  
-  The musl allocator, while lightweight and predictable, shows the weakest performance in allocation-heavy scenarios. Its simplicity becomes a disadvantage when faced with frequent, repeated allocations. This may be important with cloud deployment (K8S, etc) - which often opt for light weight libraries (On Alpine, etc.)
+  The musl allocator, while lightweight and predictable, shows the weakest performance in allocation-heavy scenarios. Its simplicity becomes a disadvantage when faced with frequent, repeated allocations. This is particularly relevant in cloud environments (e.g., Alpine-based containers), where lightweight allocators like musl are common.
 
 - **Optimized allocators still have weak spots**  
   More sophisticated allocators (mimalloc, jemalloc, tcmalloc) generally perform better, but not uniformly. Some allocation patterns are handled almost for free, while others incur noticeable overhead. Performance is highly pattern-dependent.
 
 - **The compiler matters too**  
   Even with the same allocator (glibc), compiler choice has an impact. Clang shows slightly better and more stable performance compared to GCC, suggesting that code generation and optimization influence how allocation costs are expressed.
+
+- **Variability increases with allocation size**  
+  As allocation sizes grow — especially near thresholds where allocators switch to `mmap` — runtime becomes more variable. This reflects transitions between fast-path allocation and slower OS-backed paths, introducing both latency and unpredictability.
 
 Overall, allocation cost is not just about the allocator — it is the interaction between allocator, allocation pattern, and compiler.
 
@@ -242,15 +256,13 @@ Overall, allocation cost is not just about the allocator — it is the interacti
 
 ---
 
-## Conclusion
-
 ## Practical Takeaways
 
 The performance upside is not academic.
 
 In simulation-heavy workloads — financial models, risk scenarios, Monte Carlo, or any system that repeatedly builds temporary state — allocation sits directly in the hot path. Small per-call overheads accumulate quickly, and differences of 2–3× at the allocation level can translate into meaningful end-to-end impact.
 
-Stack-based allocation (VLA) offers a simple way to approach the lower bound: allocation cost that is effectively constant and close to zero. In our results, VLA consistently tracks the static baseline, providing both speed and stability.
+Stack-based allocation (fixed-size and VLA) offers a simple way to approach the lower bound: allocation cost that is effectively constant and close to zero. VLA provides a practical mechanism to apply this pattern to size-dependent data.
 
 Used responsibly, VLA does not have to be an all-or-nothing choice. A common pattern is to use a **conditional approach**:
 
@@ -264,3 +276,9 @@ It is certainly possible to tune allocator behavior, adjust parameters, or caref
 The takeaway is straightforward:
 
 > If temporary memory sits in your hot path, how you allocate it matters — and simple strategies can go a long way.
+
+> Avoiding allocation is often the best optimization.  
+> When that’s not possible, controlling it explicitly is the next best thing.
+
+
+A follow-up article will present a small library that encapsulates these patterns, making stack-based and conditional allocation easier to apply in real code.

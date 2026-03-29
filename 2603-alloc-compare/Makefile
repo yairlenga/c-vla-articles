@@ -8,7 +8,7 @@ CFLAGS = -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fn
 LDFLAGS =-lm
 
 alloc-bench: alloc_bench.c
-	gcc $(CFLAGS) $< $(LDFLAGS) -Wall -Werror -Og -o $@
+	gcc $(CFLAGS) $< $(LDFLAGS) -Wall -Werror -Wextra -Og -o $@
 
 alloc_bench.s: alloc_bench.c
 	gcc -S $(CFLAGS) $< -fverbose-asm -fno-omit-frame-pointer

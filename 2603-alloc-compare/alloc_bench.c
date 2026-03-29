@@ -4,12 +4,6 @@
  * Benchmark temporary-array allocation strategies for a synthetic
  * portfolio PV-style workload.
  *
- * Strategies:
- *   0 = heap per loan      : malloc/free P,I,L,DF on every loan
- *   1 = heap per portfolio : malloc/free once, reused across loans
- *   2 = static reusable    : fixed-capacity reusable arrays
- *   3 = VLA                : stack arrays per loan (if supported)
- *
  * Synthetic workload:
  *   For each loan and each day:
  *     S[t] = Scheduled principal payments
@@ -19,31 +13,38 @@
  *     DF[t] = discount factor
  *   Then aggregate PV over the horizon.
  *
- * Compile examples:
- *   gcc -O3 -march=native -std=c11 -Wall -Wextra alloc_bench.c -lm -o alloc_bench
- *   clang -O3 -march=native -std=c11 -Wall -Wextra alloc_bench.c -lm -o alloc_bench
+ * Compile instructions:
  *
- * For mimalloc (Linux example):
- *   gcc -O3 -std=c11 alloc_bench.c -lm -o alloc_bench_mi -lmimalloc
+ * Default Linux: gcc/glibc (executable: glibc_bench)
+ *  gcc -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -lm -o glibc-bench
  *
- * For musl:
- *   musl-gcc -O3 -std=c11 alloc_bench.c -lm -o alloc_bench_musl
+ * For MUSL (executable: musl-bench):
+ *  musl-gcc -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -lm -o musl-bench
  *
- * Usage:
- *   ./alloc_bench [strategy] [loans] [days] [passes] [seed]
+ * For gcc/jemalloc (executable: jemalloc-bench), gcc/mimalloc (executable: mimalloc-bench), gcc/tcmalloc (executable: tcmalloc-bench):
+ *  gcc -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -lm -L"" -Wl,-rpath,"" -ljemalloc  -o jemalloc-bench
+ *  gcc -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -lm -lmimalloc -o mimalloc-bench
+ *  gcc -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -ltcmalloc -lm -o tcmalloc-bench
+ *
+ * Using Clang/glibc (executable: clang-bench):
+ *  clang -g -D_DEFAULT_SOURCE -O -march=native -std=c11 -fno-stack-protector -fno-stack-clash-protection alloc_bench.c -lm -o clang-bench
+ *
+ * Usage: (replace glibc-bench with the appropriate executable for other libraries)
+ *   ./glibc-bench [strategy] [loans] [days] [passes] [seed]
  *
  * Example:
- *   ./alloc_bench 0 20000 3600 5 12345
- *   ./alloc_bench 1 20000 3600 5 12345
- *   ./alloc_bench 2 20000 3600 5 12345
- *   ./alloc_bench 3 20000 3600 5 12345
+ *   # All strategies, 20k loans, 3600 days, 5 passes, fixed seed
+ *   ./glibc_bench 0 20000 3600 5 12345
+ *
+ *   # Specific strategy (heap per loan), 1k loans, 3600 days, 5 passes, fixed seed
+ *   ./glibc_bench 3 1000 3600 5 12345
  *
  * Strategies:
- *    Static - use static arrays defined to MAX
- *    VLA - allocate all array on stack
- *    HEAP - Allocate all array with malloc
- *    HEAP/REUSE - allocate all array at max size with malloc - reuse array
- *    HEAP/BULK - Allocate big structure with all arrays in one call.
+ *    1 - Static - use static arrays defined to MAX
+ *    2 - VLA - allocate all array on stack
+ *    3 - HEAP - Allocate all array with malloc
+ *    4 - HEAP/REUSE - allocate all array at max size with malloc - reuse array
+ *    5 - HEAP/BULK - Allocate big structure with all arrays in one call.
  */
 
 #include <stdio.h>
@@ -53,7 +54,6 @@
 #include <math.h>
 #include <time.h>
 #include <errno.h>
-
 
 #ifndef STATIC_MAX_DAYS
 #define STATIC_MAX_DAYS (50*12*30)
@@ -116,14 +116,10 @@ static inline double rand_val(double low, double high)
     return low + (high-low) * rand01 ;
 }
 
-static inline double clamp_nonneg(double x) {
-    return x < 0.0 ? 0.0 : x;
-}
-
 static void calc_DF(int max_t, double *DF, double rate)
 {
     for(int t=0 ; t<max_t ; t++ ) {
-        DF[t] = pow(1+rate/100.0, t/360.0) ;
+        DF[t] = pow(1 + rate / 100.0, t / 360.0) ;
     }
 }
 
@@ -140,7 +136,7 @@ struct portfolio_result {
 
 static struct loan_info get_loan_info(int loanid, int sim_days)
 {
-    struct loan_info info = {} ;
+    struct loan_info info = { 0} ;
     info.id = loanid ;
     info.days = (int) rand_val(sim_days*0.25, sim_days) ;
     info.orig_bal = rand_val(50000.0, 500000.0) ;
@@ -156,7 +152,7 @@ static struct loan_info get_loan_info(int loanid, int sim_days)
 static void model_loan(
     const struct loan_info *loan,
     double *S,
-    double *P,
+    double *U,
     double *I,
     double *L
 ) {
@@ -195,7 +191,7 @@ static void model_loan(
         }
 
         S[t] = scheduled_principal ;
-        P[t] = prepay;
+        U[t] = prepay;
         I[t] = interest;
         L[t] = loss;
 
@@ -203,11 +199,12 @@ static void model_loan(
 
 }
 
-static double loan_pv(int days, const double *S, const double *P, const double *I, const double *L, const double *DF)
+static double loan_pv(int days, const double *S, const double *U, const double *I, const double *L, const double *DF)
 {
+    (void) L; /* ignore losses in PV calc to keep it simple */
     double pv = 0.0 ;
     for (int t=0 ; t<days ; t++) {
-        double cf = S[t] + P[t] + I[t] ;
+        double cf = S[t] + U[t] + I[t] ;
         pv += cf/DF[t] ;
     }
     return pv ;
@@ -224,25 +221,25 @@ static inline void *xmalloc(size_t n) {
 
 static struct portfolio_result port_pv_heap_per_loan(int loans, int sim_days)
 {
-    struct portfolio_result res = {} ; 
-    double *DF = (double *)xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
+    struct portfolio_result res = {  0 } ; 
+    double *DF = xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
     calc_DF(sim_days, DF, 5.0) ;
 
     for (int loan = 0; loan < loans; ++loan) {
         struct loan_info info = get_loan_info(loan, sim_days) ;
 
         int loan_days = info.days ;
-        double *P  = xmalloc( loan_days * sizeof(*P));
+        double *U  = xmalloc( loan_days * sizeof(*U));
         double *S  = xmalloc( loan_days * sizeof(*S));
         double *I  = xmalloc( loan_days * sizeof(*I));
         double *L  = xmalloc( loan_days * sizeof(*L));
 
-        model_loan(&info, S, P, I, L);
-        res.pv += loan_pv(loan_days, S, P, I, L, DF) ;
+        model_loan(&info, S, U, I, L);
+        res.pv += loan_pv(loan_days, S, U, I, L, DF) ;
 
         free(L);
         free(I);
-        free(P);
+        free(U);
         free(S) ;
     }
 
@@ -253,28 +250,28 @@ static struct portfolio_result port_pv_heap_per_loan(int loans, int sim_days)
 static struct portfolio_result port_pv_heap_bulk(int loans, int sim_days)
 {
     struct loan_data {
-        double P[STATIC_MAX_DAYS] ;
+        double U[STATIC_MAX_DAYS] ;
         double I[STATIC_MAX_DAYS] ;
         double L[STATIC_MAX_DAYS] ;
         double S[STATIC_MAX_DAYS] ;
     } ;
-    struct portfolio_result res = {} ; 
+    struct portfolio_result res = {  0 } ; 
 
-    double *DF = (double *)xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
+    double *DF = xmalloc(STATIC_MAX_DAYS*sizeof(*DF)) ;
     calc_DF(sim_days, DF, 5.0) ;
 
     for (int loan = 0; loan < loans; ++loan) {
         struct loan_info info = get_loan_info(loan, sim_days) ;
 
-        struct loan_data *ld = malloc(sizeof(*ld)) ;
-        double *P  = ld->P ;
+        struct loan_data *ld = xmalloc(sizeof(*ld)) ;
+        double *U  = ld->U ;
         double *S  = ld->S ;
         double *I  = ld->I ;
         double *L  = ld->L ;
         int loan_days = info.days ;
 
-        model_loan(&info, S, P, I, L);
-        res.pv += loan_pv(loan_days, S, P, I, L, DF) ;
+        model_loan(&info, S, U, I, L);
+        res.pv += loan_pv(loan_days, S, U, I, L, DF) ;
 
         free(ld) ;
     }
@@ -284,32 +281,32 @@ static struct portfolio_result port_pv_heap_bulk(int loans, int sim_days)
 
 static struct portfolio_result port_pv_heap_reuse(int loans, int sim_days) 
 {
-    struct portfolio_result res = {} ; 
+    struct portfolio_result res = {  0 } ; 
 
-    double *P  = (double *)xmalloc(STATIC_MAX_DAYS*sim_days);
-    double *S  = (double *)xmalloc(STATIC_MAX_DAYS*sim_days);
-    double *I  = (double *)xmalloc(STATIC_MAX_DAYS*sim_days);
-    double *L  = (double *)xmalloc(STATIC_MAX_DAYS*sim_days);
+    double *U  = xmalloc(STATIC_MAX_DAYS * sizeof(*U));
+    double *S  = xmalloc(STATIC_MAX_DAYS * sizeof(*S));
+    double *I  = xmalloc(STATIC_MAX_DAYS * sizeof(*I));
+    double *L  = xmalloc(STATIC_MAX_DAYS * sizeof(*L));
 
-    double *DF = (double *)xmalloc(STATIC_MAX_DAYS * sizeof(*DF));
+    double *DF = xmalloc(STATIC_MAX_DAYS * sizeof(*DF));
     calc_DF(STATIC_MAX_DAYS, DF, 5.0 ) ;
 
     for (int loan = 0; loan < loans; ++loan) {
         struct loan_info info = get_loan_info(loan, sim_days) ;
-        model_loan(&info, S, P, I, L);
-        res.pv += loan_pv(info.days, S, P, I, L, DF) ;
+        model_loan(&info, S, U, I, L);
+        res.pv += loan_pv(info.days, S, U, I, L, DF) ;
     }
 
     free(L);
     free(I);
-    free(P);
+    free(U);
     free(S) ;
     free(DF);
     return res ;
 }
 
 static struct portfolio_result port_pv_static_mem(int loans, int sim_days) {
-    static double P[STATIC_MAX_DAYS];
+    static double U[STATIC_MAX_DAYS];
     static double I[STATIC_MAX_DAYS];
     static double L[STATIC_MAX_DAYS];
     static double S[STATIC_MAX_DAYS];
@@ -322,23 +319,19 @@ static struct portfolio_result port_pv_static_mem(int loans, int sim_days) {
         exit(2);
     }
 
-    struct portfolio_result res = {} ; 
+    struct portfolio_result res = { 0 } ; 
     calc_DF(STATIC_MAX_DAYS, DF, 5.0 ) ;
 
     for (int loan = 0; loan < loans; ++loan) {
         struct loan_info info = get_loan_info(loan, sim_days) ;
-        model_loan(&info, S, P, I, L);
-        res.pv += loan_pv(info.days, S, P, I, L, DF) ;
+        model_loan(&info, S, U, I, L);
+        res.pv += loan_pv(info.days, S, U, I, L, DF) ;
     }
     return res ;
 }
 
 static struct portfolio_result port_pv_using_vla(int loans, int sim_days) {
-#if defined(__STDC_NO_VLA__)
-    (void)loans; (void)days; (void)passes; (void)seed;
-    fprintf(stderr, "VLA not supported by this compiler mode\n");
-#else
-    struct portfolio_result res = {} ;
+    struct portfolio_result res = { 0 } ;
     double DF[sim_days] ;
     calc_DF(sim_days, DF, 5.0 ) ;
 
@@ -350,14 +343,13 @@ static struct portfolio_result port_pv_using_vla(int loans, int sim_days) {
 
         struct loan_info info = get_loan_info(loan, sim_days) ;
         int loan_days = info.days ;
-        double P[loan_days];
+        double U[loan_days];
         double I[loan_days];
         double L[loan_days];
         double S[loan_days];
-        model_loan(&info, S, P, I, L);
-        res.pv += loan_pv(info.days, S, P, I, L, DF) ;
+        model_loan(&info, S, U, I, L);
+        res.pv += loan_pv(info.days, S, U, I, L, DF) ;
     }
-#endif
     return res ;
 }
 
@@ -394,7 +386,7 @@ static struct portfolio_result run_sim(enum alloc_strategy strategy, int loans, 
 static struct portfolio_result simulate(enum alloc_strategy strategy, int loans, int days, int passes, uint64_t seed)
 {
     rng_state = seed ;
-    struct portfolio_result res = {} ;
+    struct portfolio_result res = { 0 } ;
 
     double t0 = now_seconds();
     for (int pass = 0 ; pass < passes ; pass++) {
@@ -445,8 +437,7 @@ int main(int argc, char **argv) {
         simulate(STRAT_HEAP, loans, days, passes, seed) ;
         simulate(STRAT_HEAP_BULK, loans, days, passes, seed) ;
     } else {
-        struct portfolio_result res = simulate(strategy, loans, days, passes, seed) ;
-        printf("PV       : %.12f\n", res.pv);
+        simulate(strategy, loans, days, passes, seed) ;
     }
     printf("\n") ;
 
